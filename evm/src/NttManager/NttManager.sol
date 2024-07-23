@@ -43,6 +43,9 @@ contract NttManager is INttManager, RateLimiter, ManagerBase {
 
     string public constant NTT_MANAGER_VERSION = "1.1.0";
 
+    address public immutable token;
+    Mode public immutable mode;
+
     // =============== Setup =================================================================
 
     constructor(
@@ -51,7 +54,10 @@ contract NttManager is INttManager, RateLimiter, ManagerBase {
         uint16 _chainId,
         uint64 _rateLimitDuration,
         bool _skipRateLimiting
-    ) RateLimiter(_rateLimitDuration, _skipRateLimiting) ManagerBase(_token, _mode, _chainId) {}
+    ) RateLimiter(_rateLimitDuration, _skipRateLimiting) ManagerBase(_chainId) {
+        token = _token;
+        mode = _mode;
+    }
 
     function __NttManager_init() internal onlyInitializing {
         // check if the owner is the deployer of this contract
@@ -94,6 +100,11 @@ contract NttManager is INttManager, RateLimiter, ManagerBase {
     /// @inheritdoc INttManager
     function getPeer(uint16 chainId_) external view returns (NttManagerPeer memory) {
         return _getPeersStorage()[chainId_];
+    }
+
+    /// @inheritdoc INttManager
+    function getMode() public view returns (uint8) {
+        return uint8(mode);
     }
 
     // =============== Admin ==============================================================
@@ -148,6 +159,8 @@ contract NttManager is INttManager, RateLimiter, ManagerBase {
     /// @dev When we add new immutables, this function should be updated
     function _checkImmutables() internal view override {
         super._checkImmutables();
+        assert(this.token() == token);
+        assert(this.mode() == mode);
         assert(this.rateLimitDuration() == rateLimitDuration);
     }
 

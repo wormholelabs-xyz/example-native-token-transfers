@@ -25,17 +25,13 @@ abstract contract ManagerBase is
 {
     // =============== Immutables ============================================================
 
-    address public immutable token;
     address immutable deployer;
-    Mode public immutable mode;
     uint16 public immutable chainId;
     uint256 immutable evmChainId;
 
     // =============== Setup =================================================================
 
-    constructor(address _token, Mode _mode, uint16 _chainId) {
-        token = _token;
-        mode = _mode;
+    constructor(uint16 _chainId) {
         chainId = _chainId;
         evmChainId = block.chainid;
         // save the deployer (check this on initialization)
@@ -264,11 +260,6 @@ abstract contract ManagerBase is
     // =============== Public Getters ========================================================
 
     /// @inheritdoc IManagerBase
-    function getMode() public view returns (uint8) {
-        return uint8(mode);
-    }
-
-    /// @inheritdoc IManagerBase
     function getThreshold() public view returns (uint8) {
         return _getThresholdStorage().num;
     }
@@ -437,8 +428,6 @@ abstract contract ManagerBase is
 
     /// @dev When we add new immutables, this function should be updated
     function _checkImmutables() internal view virtual override {
-        assert(this.token() == token);
-        assert(this.mode() == mode);
         assert(this.chainId() == chainId);
     }
 
