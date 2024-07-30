@@ -15,7 +15,7 @@ library TransceiverHelpersLib {
     bytes4 constant TEST_TRANSCEIVER_PAYLOAD_PREFIX = 0x99455454;
     uint16 constant SENDING_CHAIN_ID = 1;
 
-    function setup_transceivers(NttManager nttManager)
+    function setup_transceivers(ManagerBase nttManager)
         internal
         returns (DummyTransceiver, DummyTransceiver)
     {
