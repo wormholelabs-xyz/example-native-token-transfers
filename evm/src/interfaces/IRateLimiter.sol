@@ -62,7 +62,7 @@ interface IRateLimiter {
     ///    - txTimestamp: the timestamp of the transfer.
     ///    - recipientChain: the chain of the recipient.
     ///    - sender: the sender of the transfer.
-    ///    - transceiverInstructions: additional instructions to be forwarded to the recipient chain.
+    ///    - relayInstructions: additional instructions to be forwarded to the relayer.
     struct OutboundQueuedTransfer {
         bytes32 recipient;
         bytes32 refundAddress;
@@ -70,7 +70,8 @@ interface IRateLimiter {
         uint64 txTimestamp;
         uint16 recipientChain;
         address sender;
-        bytes transceiverInstructions;
+        bytes executorQuote;
+        bytes relayInstructions;
     }
 
     /// @notice Parameters for an inbound queued transfer.

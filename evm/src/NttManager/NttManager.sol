@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache 2
 pragma solidity >=0.8.8 <0.9.0;
 
+import "example-messaging-executor/evm/src/libraries/RelayInstructions.sol";
 import "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import "openzeppelin-contracts/contracts/token/ERC20/extensions/ERC20Burnable.sol";
@@ -11,7 +12,6 @@ import "../libraries/RateLimiter.sol";
 
 import "../interfaces/INttManager.sol";
 import "../interfaces/INttToken.sol";
-import "../interfaces/ITransceiver.sol";
 
 import {ManagerBase} from "./ManagerBase.sol";
 
@@ -46,12 +46,17 @@ contract NttManager is INttManager, RateLimiter, ManagerBase {
     // =============== Setup =================================================================
 
     constructor(
+        address _endpoint,
+        address _executor,
         address _token,
         Mode _mode,
         uint16 _chainId,
         uint64 _rateLimitDuration,
         bool _skipRateLimiting
-    ) RateLimiter(_rateLimitDuration, _skipRateLimiting) ManagerBase(_token, _mode, _chainId) {}
+    )
+        RateLimiter(_rateLimitDuration, _skipRateLimiting)
+        ManagerBase(_endpoint, _executor, _token, _mode, _chainId)
+    {}
 
     function __NttManager_init() internal onlyInitializing {
         // check if the owner is the deployer of this contract
@@ -64,12 +69,14 @@ contract NttManager is INttManager, RateLimiter, ManagerBase {
         __PausedOwnable_init(msg.sender, msg.sender);
         __ReentrancyGuard_init();
         _setOutboundLimit(TrimmedAmountLib.max(tokenDecimals()));
+
+        // Register the proxy as the integrator and the admin.
+        endpoint.register(address(this));
     }
 
     function _initialize() internal virtual override {
         __NttManager_init();
         _checkThresholdInvariants();
-        _checkTransceiversInvariants();
     }
 
     // =============== Storage ==============================================================
@@ -105,6 +112,7 @@ contract NttManager is INttManager, RateLimiter, ManagerBase {
         uint16 peerChainId,
         bytes32 peerContract,
         uint8 decimals,
+        uint128 gasLimit,
         uint256 inboundLimit
     ) public onlyOwner {
         if (peerChainId == 0) {
@@ -116,6 +124,9 @@ contract NttManager is INttManager, RateLimiter, ManagerBase {
         if (decimals == 0) {
             revert InvalidPeerDecimals();
         }
+        if (gasLimit == 0) {
+            revert InvalidGasLimitZero(peerChainId);
+        }
         if (peerChainId == chainId) {
             revert InvalidPeerSameChainId();
         }
@@ -124,6 +135,7 @@ contract NttManager is INttManager, RateLimiter, ManagerBase {
 
         _getPeersStorage()[peerChainId].peerAddress = peerContract;
         _getPeersStorage()[peerChainId].tokenDecimals = decimals;
+        _getPeersStorage()[peerChainId].gasLimit = gasLimit;
 
         uint8 toDecimals = tokenDecimals();
         _setInboundLimit(inboundLimit.trim(toDecimals, toDecimals), peerChainId);
@@ -131,6 +143,17 @@ contract NttManager is INttManager, RateLimiter, ManagerBase {
         emit PeerUpdated(
             peerChainId, oldPeer.peerAddress, oldPeer.tokenDecimals, peerContract, decimals
         );
+    }
+
+    /// @inheritdoc INttManager
+    function setGasLimit(uint16 peerChainId, uint128 gasLimit) external onlyOwner {
+        if (gasLimit == 0) {
+            revert InvalidGasLimitZero(peerChainId);
+        }
+        if (_getPeersStorage()[peerChainId].peerAddress == bytes32(0)) {
+            revert InvalidPeerZeroAddress();
+        }
+        _getPeersStorage()[peerChainId].gasLimit = gasLimit;
     }
 
     /// @inheritdoc INttManager
@@ -161,10 +184,12 @@ contract NttManager is INttManager, RateLimiter, ManagerBase {
     function transfer(
         uint256 amount,
         uint16 recipientChain,
-        bytes32 recipient
+        bytes32 recipient,
+        bytes calldata executorQuote
     ) external payable nonReentrant whenNotPaused returns (uint64) {
-        return
-            _transferEntryPoint(amount, recipientChain, recipient, recipient, false, new bytes(1));
+        return _transferEntryPoint(
+            amount, recipientChain, recipient, recipient, false, executorQuote, new bytes(0)
+        );
     }
 
     /// @inheritdoc INttManager
@@ -174,43 +199,58 @@ contract NttManager is INttManager, RateLimiter, ManagerBase {
         bytes32 recipient,
         bytes32 refundAddress,
         bool shouldQueue,
-        bytes memory transceiverInstructions
+        bytes calldata executorQuote,
+        bytes memory relayInstructions
     ) external payable nonReentrant whenNotPaused returns (uint64) {
         return _transferEntryPoint(
-            amount, recipientChain, recipient, refundAddress, shouldQueue, transceiverInstructions
+            amount,
+            recipientChain,
+            recipient,
+            refundAddress,
+            shouldQueue,
+            executorQuote,
+            relayInstructions
         );
-    }
-
-    /// @inheritdoc INttManager
-    function attestationReceived(
-        uint16 sourceChainId,
-        bytes32 sourceNttManagerAddress,
-        TransceiverStructs.NttManagerMessage memory payload
-    ) external onlyTransceiver whenNotPaused {
-        _verifyPeer(sourceChainId, sourceNttManagerAddress);
-
-        // Compute manager message digest and record transceiver attestation.
-        bytes32 nttManagerMessageHash = _recordTransceiverAttestation(sourceChainId, payload);
-
-        if (isMessageApproved(nttManagerMessageHash)) {
-            executeMsg(sourceChainId, sourceNttManagerAddress, payload);
-        }
     }
 
     /// @inheritdoc INttManager
     function executeMsg(
         uint16 sourceChainId,
-        bytes32 sourceNttManagerAddress,
-        TransceiverStructs.NttManagerMessage memory message
+        UniversalAddress sourceNttManagerAddress,
+        uint64 epSeq,
+        bytes memory payload
     ) public whenNotPaused {
-        (bytes32 digest, bool alreadyExecuted) =
-            _isMessageExecuted(sourceChainId, sourceNttManagerAddress, message);
-
-        if (alreadyExecuted) {
-            return;
+        // We should only except messages from a peer.
+        bytes32 peerAddress = _getPeersStorage()[sourceChainId].peerAddress;
+        if (sourceNttManagerAddress != UniversalAddressLibrary.fromBytes32(peerAddress)) {
+            revert InvalidPeer(
+                sourceChainId, UniversalAddressLibrary.toBytes32(sourceNttManagerAddress)
+            );
         }
 
-        _handleMsg(sourceChainId, sourceNttManagerAddress, message, digest);
+        // The endpoint uses the payload hash, not the actual payload.
+        bytes32 payloadHash = keccak256(payload);
+
+        // The endpoint does replay protection and verifies that there has been at least one attestation.
+        (,, uint8 numAttested) =
+            endpoint.recvMessage(sourceChainId, sourceNttManagerAddress, epSeq, payloadHash);
+
+        uint8 threshold = getThreshold(sourceChainId);
+
+        if (numAttested < threshold) {
+            revert ThresholdNotMet(threshold, numAttested);
+        }
+
+        TransceiverStructs.NttManagerMessage memory message =
+            TransceiverStructs.parseNttManagerMessage(payload);
+
+        bytes32 digest = TransceiverStructs.nttManagerMessageDigest(sourceChainId, message);
+        _handleMsg(
+            sourceChainId,
+            UniversalAddressLibrary.toBytes32(sourceNttManagerAddress),
+            message,
+            digest
+        );
     }
 
     /// @dev Override this function to handle custom NttManager payloads.
@@ -346,7 +386,8 @@ contract NttManager is INttManager, RateLimiter, ManagerBase {
             queuedTransfer.recipient,
             queuedTransfer.refundAddress,
             queuedTransfer.sender,
-            queuedTransfer.transceiverInstructions
+            queuedTransfer.executorQuote,
+            queuedTransfer.relayInstructions
         );
     }
 
@@ -382,7 +423,8 @@ contract NttManager is INttManager, RateLimiter, ManagerBase {
         bytes32 recipient,
         bytes32 refundAddress,
         bool shouldQueue,
-        bytes memory transceiverInstructions
+        bytes memory executorQuote,
+        bytes memory relayInstructions
     ) internal returns (uint64) {
         if (amount == 0) {
             revert ZeroAmount();
@@ -446,7 +488,8 @@ contract NttManager is INttManager, RateLimiter, ManagerBase {
             recipient,
             refundAddress,
             shouldQueue,
-            transceiverInstructions,
+            executorQuote,
+            relayInstructions,
             trimmedAmount,
             sequence
         );
@@ -462,7 +505,8 @@ contract NttManager is INttManager, RateLimiter, ManagerBase {
             recipient,
             refundAddress,
             msg.sender,
-            transceiverInstructions
+            executorQuote,
+            relayInstructions
         );
     }
 
@@ -472,7 +516,8 @@ contract NttManager is INttManager, RateLimiter, ManagerBase {
         bytes32 recipient,
         bytes32 refundAddress,
         bool shouldQueue,
-        bytes memory transceiverInstructions,
+        bytes memory executorQuote,
+        bytes memory relayInstructions,
         TrimmedAmount trimmedAmount,
         uint64 sequence
     ) internal virtual returns (bool enqueued) {
@@ -500,7 +545,8 @@ contract NttManager is INttManager, RateLimiter, ManagerBase {
                 recipient,
                 refundAddress,
                 msg.sender,
-                transceiverInstructions
+                executorQuote,
+                relayInstructions
             );
 
             // refund price quote back to sender
@@ -525,66 +571,104 @@ contract NttManager is INttManager, RateLimiter, ManagerBase {
         bytes32 recipient,
         bytes32 refundAddress,
         address sender,
-        bytes memory transceiverInstructions
+        bytes memory executorQuote,
+        bytes memory relayInstructions
     ) internal returns (uint64 msgSequence) {
         // verify chain has not forked
         checkFork(evmChainId);
 
-        (
-            address[] memory enabledTransceivers,
-            TransceiverStructs.TransceiverInstruction[] memory instructions,
-            uint256[] memory priceQuotes,
-            uint256 totalPriceQuote
-        ) = _prepareForTransfer(recipientChain, transceiverInstructions);
+        // Compute the quote price and refund user excess value from msg.value
+        uint256 epTotalPriceQuote = quoteAndRefund(recipientChain);
 
         // push it on the stack again to avoid a stack too deep error
         uint64 seq = sequence;
+        TrimmedAmount amt = amount;
+        bytes32 recip = recipient;
+        bytes32 refundAddr = refundAddress;
 
-        TransceiverStructs.NativeTokenTransfer memory ntt = _prepareNativeTokenTransfer(
-            amount, recipient, recipientChain, seq, sender, refundAddress
+        bytes memory encodedNttManagerPayload =
+            buildEncodedPayload(amt, recip, recipientChain, seq, sender, refundAddr);
+
+        // push onto the stack again to avoid stack too deep error
+        uint16 destinationChain = recipientChain;
+
+        // send the message
+        bytes32 payloadHash = keccak256(encodedNttManagerPayload);
+        endpoint.sendMessage{value: epTotalPriceQuote}(
+            destinationChain,
+            UniversalAddressLibrary.fromBytes32(_getPeersStorage()[destinationChain].peerAddress),
+            payloadHash,
+            UniversalAddressLibrary.toAddress(UniversalAddressLibrary.fromBytes32(refundAddr))
         );
 
+        emit TransferSent(
+            recip,
+            refundAddr,
+            amt.untrim(tokenDecimals()),
+            epTotalPriceQuote,
+            destinationChain,
+            seq,
+            payloadHash
+        );
+
+        bytes memory execQuote = executorQuote;
+
+        uint128 gasLimit = _getPeersStorage()[destinationChain].gasLimit;
+        if (gasLimit == 0) {
+            revert InvalidGasLimitZero(destinationChain);
+        }
+
+        bytes memory ri = RelayInstructions.encodeGas(gasLimit, 0);
+        if (relayInstructions.length != 0) {
+            ri = abi.encodePacked(ri, relayInstructions);
+        }
+
+        executor.requestExecution(
+            destinationChain,
+            recip,
+            UniversalAddressLibrary.fromBytes32(refundAddr).toAddress(),
+            execQuote,
+            encodedNttManagerPayload,
+            ri
+        );
+
+        // return the sequence number
+        return seq;
+    }
+
+    function quoteAndRefund(
+        uint16 recipientChain
+    ) internal returns (uint256 epTotalPriceQuote) {
+        // refund user excess value from msg.value
+        epTotalPriceQuote = quoteDeliveryPrice(recipientChain);
+        // Check for negative value.
+        {
+            uint256 excessValue = msg.value - epTotalPriceQuote;
+            if (excessValue > 0) {
+                _refundToSender(excessValue);
+            }
+        }
+    }
+
+    function buildEncodedPayload(
+        TrimmedAmount amount,
+        bytes32 recipient,
+        uint16 recipientChain,
+        uint64 seq,
+        address sender,
+        bytes32 refundAddr
+    ) internal returns (bytes memory encodedNttManagerPayload) {
+        TransceiverStructs.NativeTokenTransfer memory ntt =
+            _prepareNativeTokenTransfer(amount, recipient, recipientChain, seq, sender, refundAddr);
+
         // construct the NttManagerMessage payload
-        bytes memory encodedNttManagerPayload = TransceiverStructs.encodeNttManagerMessage(
+        encodedNttManagerPayload = TransceiverStructs.encodeNttManagerMessage(
             TransceiverStructs.NttManagerMessage(
                 bytes32(uint256(seq)),
                 toWormholeFormat(sender),
                 TransceiverStructs.encodeNativeTokenTransfer(ntt)
             )
         );
-
-        // push onto the stack again to avoid stack too deep error
-        uint16 destinationChain = recipientChain;
-
-        // send the message
-        _sendMessageToTransceivers(
-            recipientChain,
-            refundAddress,
-            _getPeersStorage()[destinationChain].peerAddress,
-            priceQuotes,
-            instructions,
-            enabledTransceivers,
-            encodedNttManagerPayload
-        );
-
-        // push it on the stack again to avoid a stack too deep error
-        TrimmedAmount amt = amount;
-
-        emit TransferSent(
-            recipient,
-            refundAddress,
-            amt.untrim(tokenDecimals()),
-            totalPriceQuote,
-            destinationChain,
-            seq
-        );
-
-        emit TransferSent(
-            TransceiverStructs._nttManagerMessageDigest(chainId, encodedNttManagerPayload)
-        );
-
-        // return the sequence number
-        return seq;
     }
 
     /// @dev Override this function to provide an additional payload on the NativeTokenTransfer
