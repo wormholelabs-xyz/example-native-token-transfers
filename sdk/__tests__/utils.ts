@@ -5,6 +5,7 @@ import {
   Chain,
   ChainAddress,
   ChainContext,
+  ChainId,
   NativeSigner,
   Platform,
   Signer,
@@ -31,7 +32,6 @@ import { IWormholeRelayer__factory } from "../../evm/ts/ethers-ci-contracts/fact
 import { NttManager__factory } from "../../evm/ts/ethers-ci-contracts/factories/NttManager__factory.js";
 import { TransceiverStructs__factory } from "../../evm/ts/ethers-ci-contracts/factories/TransceiverStructs__factory.js";
 import { TrimmedAmountLib__factory } from "../../evm/ts/ethers-ci-contracts/factories/TrimmedAmount.sol/TrimmedAmountLib__factory.js";
-import { WormholeTransceiver__factory } from "../../evm/ts/ethers-ci-contracts/factories/WormholeTransceiver__factory.js";
 
 import "../../evm/ts/src/index.js";
 import "../../solana/ts/sdk/index.js";
@@ -39,11 +39,24 @@ import { NTT } from "../../solana/ts/lib/index.js";
 import { SolanaNtt } from "../../solana/ts/sdk/index.js";
 import { Ntt } from "../definitions/src/index.js";
 import { submitAccountantVAAs } from "./accountant.js";
+import { RelayInstructions__factory } from "../../evm/ts/ethers-ci-contracts/index.js";
 
 // Note: Currently, in order for this to run, the evm bindings with extra contracts must be build
 // To do that, at the root, run `npm run generate:test`
 
 export const NETWORK: "Devnet" = "Devnet";
+export const ENDPOINTS: { [chainId in ChainId]?: `0x${string}` } = {
+  2: "0xDf47Bc555600fF6b96E3BA3AAAaB9DD9d5f7CCF0",
+  4: "0x2cE21CE8a3946362Df81a5B36dAe904D32Aa96Bd",
+};
+export const EXECUTORS: { [chainId in ChainId]?: `0x${string}` } = {
+  2: "0x634fACff0663E8da9e9Eae4963d2F5006078b7BD",
+  4: "0x6D4Dd4E7166A55D4e72855Fde204D47a167DA197",
+};
+export const WHG_ADAPTERS: { [chainId in ChainId]?: `0x${string}` } = {
+  2: "0xd902B87BBFc66eb700667Ee35Bdb6e5d58C3261f",
+  4: "0xe2267e33C074A3b2901a7eE1419949cE6C06991d",
+};
 
 type NativeSdkSigner<P extends Platform> = P extends "Evm"
   ? ethers.Wallet
@@ -116,24 +129,24 @@ export async function link(chainInfos: Ctx[], accountantPrivateKey: string) {
   console.log("========================");
 
   // first submit hub init to accountant
-  const hub = chainInfos[0]!;
-  const hubChain = hub.context.chain;
+  // const hub = chainInfos[0]!;
+  // const hubChain = hub.context.chain;
 
-  const msgId: WormholeMessageId = {
-    chain: hubChain,
-    emitter: Wormhole.chainAddress(
-      hubChain,
-      hub.contracts!.transceiver["wormhole"]!
-    ).address.toUniversalAddress(),
-    sequence: 0n,
-  };
+  // const msgId: WormholeMessageId = {
+  //   chain: hubChain,
+  //   emitter: Wormhole.chainAddress(
+  //     hubChain,
+  //     hub.contracts!.transceiver["wormhole"]!
+  //   ).address.toUniversalAddress(),
+  //   sequence: 0n,
+  // };
 
-  const vaa = await wh.getVaa(msgId, "Ntt:TransceiverInfo");
-  const vaas: Uint8Array[] = [serialize(vaa!)];
+  // const vaa = await wh.getVaa(msgId, "Ntt:TransceiverInfo");
+  // const vaas: Uint8Array[] = [serialize(vaa!)];
 
   // [target, peer, vaa]
-  const registrations: [string, string, VAA<"Ntt:TransceiverRegistration">][] =
-    [];
+  // const registrations: [string, string, VAA<"Ntt:TransceiverRegistration">][] =
+  //   [];
 
   // register each chain in parallel
   await Promise.all(
@@ -151,63 +164,64 @@ export async function link(chainInfos: Ctx[], accountantPrivateKey: string) {
         );
 
         for (const peerInfo of toRegister) {
-          const vaa = await setupPeer(targetInfo, peerInfo);
-          if (!vaa) throw new Error("No VAA found");
+          // const vaa = await setupPeer(targetInfo, peerInfo);
+          await setupPeer(targetInfo, peerInfo);
+          // if (!vaa) throw new Error("No VAA found");
           // Add to registrations by PEER chain so we can register hub first
-          registrations.push([
-            targetInfo.context.chain,
-            peerInfo.context.chain,
-            vaa,
-          ]);
+          // registrations.push([
+          //   targetInfo.context.chain,
+          //   peerInfo.context.chain,
+          //   vaa,
+          // ]);
         }
       })()
     )
   );
 
   // Push Hub to Spoke registrations
-  const hubToSpokeRegistrations = registrations.filter(
-    ([_, peer]) => peer === hubChain
-  );
-  for (const [, , vaa] of hubToSpokeRegistrations) {
-    console.log(
-      "Pushing hub to spoke registrations: ",
-      vaa.emitterChain,
-      vaa.payload.chain,
-      vaa.payload.transceiver.toString()
-    );
-    vaas.push(serialize(vaa));
-  }
+  // const hubToSpokeRegistrations = registrations.filter(
+  //   ([_, peer]) => peer === hubChain
+  // );
+  // for (const [, , vaa] of hubToSpokeRegistrations) {
+  //   console.log(
+  //     "Pushing hub to spoke registrations: ",
+  //     vaa.emitterChain,
+  //     vaa.payload.chain,
+  //     vaa.payload.transceiver.toString()
+  //   );
+  //   vaas.push(serialize(vaa));
+  // }
 
   // Push Spoke to Hub registrations
-  const spokeToHubRegistrations = registrations.filter(
-    ([target, _]) => target === hubChain
-  );
-  for (const [, , vaa] of spokeToHubRegistrations) {
-    console.log(
-      "Pushing spoke to hub registrations: ",
-      vaa.emitterChain,
-      vaa.payload.chain,
-      vaa.payload.transceiver.toString()
-    );
-    vaas.push(serialize(vaa));
-  }
+  // const spokeToHubRegistrations = registrations.filter(
+  //   ([target, _]) => target === hubChain
+  // );
+  // for (const [, , vaa] of spokeToHubRegistrations) {
+  //   console.log(
+  //     "Pushing spoke to hub registrations: ",
+  //     vaa.emitterChain,
+  //     vaa.payload.chain,
+  //     vaa.payload.transceiver.toString()
+  //   );
+  //   vaas.push(serialize(vaa));
+  // }
 
   // Push all other registrations
-  const spokeToSpokeRegistrations = registrations.filter(
-    ([target, peer]) => target !== hubChain && peer !== hubChain
-  );
-  for (const [, , vaa] of spokeToSpokeRegistrations) {
-    console.log(
-      "Pushing spoke to spoke registrations: ",
-      vaa.emitterChain,
-      vaa.payload.chain,
-      vaa.payload.transceiver.toString()
-    );
-    vaas.push(serialize(vaa));
-  }
+  // const spokeToSpokeRegistrations = registrations.filter(
+  //   ([target, peer]) => target !== hubChain && peer !== hubChain
+  // );
+  // for (const [, , vaa] of spokeToSpokeRegistrations) {
+  //   console.log(
+  //     "Pushing spoke to spoke registrations: ",
+  //     vaa.emitterChain,
+  //     vaa.payload.chain,
+  //     vaa.payload.transceiver.toString()
+  //   );
+  //   vaas.push(serialize(vaa));
+  // }
 
   // Submit all registrations at once
-  await submitAccountantVAAs(vaas, accountantPrivateKey);
+  // await submitAccountantVAAs(vaas, accountantPrivateKey);
 }
 
 export async function transferWithChecks(sourceCtx: Ctx, destinationCtx: Ctx) {
@@ -367,6 +381,11 @@ async function deployEvm(ctx: Ctx): Promise<Ctx> {
   const trimmedAmountContract = await trimmedAmountFactory.deploy();
   await trimmedAmountContract.deploymentTransaction()?.wait(1);
 
+  console.log("Deploying relay instructions");
+  const relayInstructionsFactory = new RelayInstructions__factory(wallet);
+  const relayInstructionsContract = await relayInstructionsFactory.deploy();
+  await relayInstructionsContract.deploymentTransaction()?.wait(1);
+
   console.log("Deploying dummy token");
   // Deploy the NTT token
   const NTTAddress = await new (ctx.mode === "locking"
@@ -386,12 +405,15 @@ async function deployEvm(ctx: Ctx): Promise<Ctx> {
   const transceiverStructsAddress =
     await transceiverStructsContract.getAddress();
   const trimmedAmountAddress = await trimmedAmountContract.getAddress();
+  const relayInstructionsAddress = await relayInstructionsContract.getAddress();
   const ERC20NTTAddress = await NTTAddress.getAddress();
 
   const myObj = {
     "src/libraries/TransceiverStructs.sol:TransceiverStructs":
       transceiverStructsAddress,
     "src/libraries/TrimmedAmount.sol:TrimmedAmountLib": trimmedAmountAddress,
+    "lib/example-messaging-executor/evm/src/libraries/RelayInstructions.sol:RelayInstructions":
+      relayInstructionsAddress,
   };
 
   const chainId = toChainId(ctx.context.chain);
@@ -401,7 +423,17 @@ async function deployEvm(ctx: Ctx): Promise<Ctx> {
 
   console.log("Deploying manager implementation");
   const wormholeManager = new NttManager__factory(myObj, wallet);
+  const endpoint = ENDPOINTS[chainId];
+  if (!endpoint) {
+    throw new Error(`Endpoint is not specified for chain ${chainId}`);
+  }
+  const executor = EXECUTORS[chainId];
+  if (!executor) {
+    throw new Error(`Executor is not specified for chain ${chainId}`);
+  }
   const managerAddress = await wormholeManager.deploy(
+    endpoint,
+    executor,
     ERC20NTTAddress, // Token address
     ctx.mode === "locking" ? 0 : 1, // Lock
     chainId, // chain id
@@ -424,46 +456,23 @@ async function deployEvm(ctx: Ctx): Promise<Ctx> {
     wallet
   );
 
-  console.log("Deploy transceiver implementation");
-  const WormholeTransceiverFactory = new WormholeTransceiver__factory(
-    myObj,
-    wallet
-  );
-  const WormholeTransceiverAddress = await WormholeTransceiverFactory.deploy(
-    // List of useful wormhole contracts - https://github.com/wormhole-foundation/wormhole/blob/00f504ef452ae2d94fa0024c026be2d8cf903ad5/ethereum/ts-scripts/relayer/config/ci/contracts.json
-    await manager.getAddress(),
-    ctx.context.config.contracts.coreBridge!, // Core wormhole contract - https://docs.wormhole.com/wormhole/blockchain-environments/evm#local-network-contract -- may need to be changed to support other chains
-    ctx.context.config.contracts.relayer!, // Relayer contract -- double check these...https://github.com/wormhole-foundation/wormhole/blob/main/sdk/js/src/relayer/__tests__/wormhole_relayer.ts
-    "0x0000000000000000000000000000000000000000", // TODO - Specialized relayer??????
-    200, // Consistency level
-    500000n // Gas limit
-  );
-  await WormholeTransceiverAddress.deploymentTransaction()?.wait(1);
-
-  // Setup with the proxy
-  console.log("Deploy transceiver proxy");
-  const transceiverProxyFactory = new ERC1967Proxy__factory(wallet);
-  const transceiverProxyDeployment = await transceiverProxyFactory.deploy(
-    await WormholeTransceiverAddress.getAddress(),
-    "0x"
-  );
-  await transceiverProxyDeployment.deploymentTransaction()?.wait(1);
-
-  const transceiverProxyAddress = await transceiverProxyDeployment.getAddress();
-  const transceiver = WormholeTransceiver__factory.connect(
-    transceiverProxyAddress,
-    wallet
-  );
-
   // initialize() on both the manager and transceiver
   console.log("Initialize the manager");
   await tryAndWaitThrice(() => manager.initialize());
-  console.log("Initialize the transceiver");
-  await tryAndWaitThrice(() => transceiver.initialize());
 
   // Setup the initial calls, like transceivers for the manager
+  const adapter = WHG_ADAPTERS[chainId];
+  if (!adapter) {
+    throw new Error(`Adapter is not specified for chain ${chainId}`);
+  }
   console.log("Set transceiver for manager");
-  await tryAndWaitThrice(() => manager.setTransceiver(transceiverProxyAddress));
+  await tryAndWaitThrice(() => manager.setTransceiver(adapter));
+  await tryAndWaitThrice(() =>
+    manager.enableSendTransceiver(chainId === 2 ? 4 : 2, adapter)
+  );
+  await tryAndWaitThrice(() =>
+    manager.enableRecvTransceiver(chainId === 2 ? 4 : 2, adapter)
+  );
 
   console.log("Set outbound limit for manager");
   await tryAndWaitThrice(() =>
@@ -474,7 +483,7 @@ async function deployEvm(ctx: Ctx): Promise<Ctx> {
     ...ctx,
     contracts: {
       transceiver: {
-        wormhole: transceiverProxyAddress,
+        wormhole: adapter,
       },
       manager: await managerProxyAddress.getAddress(),
       token: ERC20NTTAddress,
@@ -598,6 +607,7 @@ async function setupPeer(targetCtx: Ctx, peerCtx: Ctx) {
   const peerTransceiver = Wormhole.chainAddress(peer.chain, transceiver!);
 
   const tokenDecimals = target.config.nativeTokenDecimals;
+  const gasLimit = BigInt("100000000");
   const inboundLimit = amount.units(amount.parse("1000", tokenDecimals));
 
   const { signer, address: sender } = targetCtx.signers;
@@ -606,6 +616,7 @@ async function setupPeer(targetCtx: Ctx, peerCtx: Ctx) {
   const setPeerTxs = nttManager.setPeer(
     peerManager,
     tokenDecimals,
+    gasLimit,
     inboundLimit,
     sender.address
   );
@@ -616,33 +627,12 @@ async function setupPeer(targetCtx: Ctx, peerCtx: Ctx) {
     peerTransceiver,
     sender.address
   );
-  const xcvrPeerTxids = await signSendWait(target, setXcvrPeerTxs, signer);
-  const [whm] = await target.parseTransaction(xcvrPeerTxids[0]!.txid);
+  // const xcvrPeerTxids = await signSendWait(target, setXcvrPeerTxs, signer);
+  await signSendWait(target, setXcvrPeerTxs, signer);
+  // const [whm] = await target.parseTransaction(xcvrPeerTxids[0]!.txid);
   console.log("Set peers for: ", target.chain, peer.chain);
 
-  if (
-    chainToPlatform(target.chain) === "Evm" &&
-    chainToPlatform(peer.chain) === "Evm"
-  ) {
-    const nativeSigner = (signer as NativeSigner).unwrap();
-    const xcvr = WormholeTransceiver__factory.connect(
-      targetCtx.contracts!.transceiver["wormhole"]!,
-      nativeSigner.signer
-    );
-    const peerChainId = toChainId(peer.chain);
-
-    console.log("Setting isEvmChain for: ", peer.chain);
-    await tryAndWaitThrice(() =>
-      xcvr.setIsWormholeEvmChain.send(peerChainId, true)
-    );
-
-    console.log("Setting wormhole relaying for: ", peer.chain);
-    await tryAndWaitThrice(() =>
-      xcvr.setIsWormholeRelayingEnabled.send(peerChainId, true)
-    );
-  }
-
-  return await wh.getVaa(whm!, "Ntt:TransceiverRegistration");
+  // return await wh.getVaa(whm!, "Ntt:TransceiverRegistration");
 }
 
 async function receive(msgId: WormholeMessageId, destination: Ctx) {
@@ -731,7 +721,7 @@ async function tryAndWaitThrice(
 export async function testHub(
   source: Chain,
   destinationA: Chain,
-  destinationB: Chain,
+  // destinationB: Chain,
   getNativeSigner: (ctx: Partial<Ctx>) => any,
   accountantPrivateKey: string
 ) {
@@ -739,35 +729,37 @@ export async function testHub(
   const hubChain = wh.getChain(source);
 
   const spokeChainA = wh.getChain(destinationA);
-  const spokeChainB = wh.getChain(destinationB);
+  // const spokeChainB = wh.getChain(destinationB);
 
   // Deploy contracts for hub chain
   console.log("Deploying contracts");
-  const [hub, spokeA, spokeB] = await Promise.all([
+  const [hub, spokeA] = await Promise.all([
     deploy({ context: hubChain, mode: "locking" }, getNativeSigner),
     deploy({ context: spokeChainA, mode: "burning" }, getNativeSigner),
-    deploy({ context: spokeChainB, mode: "burning" }, getNativeSigner),
+    // deploy({ context: spokeChainB, mode: "burning" }, getNativeSigner),
   ]);
 
   console.log("Deployed: ", {
     [hub.context.chain]: hub.contracts,
     [spokeA.context.chain]: spokeA.contracts,
-    [spokeB.context.chain]: spokeB.contracts,
+    // [spokeB.context.chain]: spokeB.contracts,
   });
 
   // Link contracts
   console.log("Linking Peers");
-  await link([hub, spokeA, spokeB], accountantPrivateKey);
+  await link([hub, spokeA], accountantPrivateKey);
 
   // Transfer tokens from hub to spoke and check balances
   console.log("Transfer hub to spoke A");
   await transferWithChecks(hub, spokeA);
 
   // Transfer between spokes and check balances
-  console.log("Transfer spoke A to spoke B");
-  await transferWithChecks(spokeA, spokeB);
+  // console.log("Transfer spoke A to spoke B");
+  // await transferWithChecks(spokeA, spokeB);
 
   // Transfer back to hub and check balances
-  console.log("Transfer spoke B to hub");
-  await transferWithChecks(spokeB, hub);
+  // console.log("Transfer spoke B to hub");
+  // await transferWithChecks(spokeB, hub);
+  console.log("Transfer spoke A to hub");
+  await transferWithChecks(spokeA, hub);
 }

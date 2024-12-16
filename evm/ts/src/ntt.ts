@@ -194,7 +194,7 @@ export class EvmNtt<N extends Network, C extends EvmChains>
     readonly chain: C,
     readonly provider: Provider,
     readonly contracts: Contracts & { ntt?: Ntt.Contracts },
-    readonly version: string = "1.0.0"
+    readonly version: string = "2.0.0"
   ) {
     if (!contracts.ntt) throw new Error("No Ntt Contracts provided");
 
@@ -214,32 +214,6 @@ export class EvmNtt<N extends Network, C extends EvmChains>
     );
 
     this.xcvrs = [];
-    if (
-      "wormhole" in contracts.ntt.transceiver &&
-      contracts.ntt.transceiver["wormhole"]
-    ) {
-      const transceiverTypes = [
-        "wormhole", // wormhole xcvr should be ix 0
-        ...Object.keys(contracts.ntt.transceiver).filter((transceiverType) => {
-          transceiverType !== "wormhole";
-        }),
-      ];
-      transceiverTypes.map((transceiverType) => {
-        // we currently only support wormhole transceivers
-        if (transceiverType !== "wormhole") {
-          throw new Error(`Unsupported transceiver type: ${transceiverType}`);
-        }
-
-        // Enable more Transceivers here
-        this.xcvrs.push(
-          new EvmNttWormholeTranceiver(
-            this,
-            contracts.ntt!.transceiver[transceiverType]!,
-            abiBindings!
-          )
-        );
-      });
-    }
   }
 
   async getTransceiver(ix: number): Promise<NttTransceiver<N, C, any> | null> {
@@ -290,8 +264,8 @@ export class EvmNtt<N extends Network, C extends EvmChains>
     yield this.createUnsignedTx(tx, "Ntt.setPauser");
   }
 
-  async getThreshold(): Promise<number> {
-    return Number(await this.manager.getThreshold());
+  async getThreshold(chainId: number): Promise<number> {
+    return Number(await this.manager.getThreshold(chainId));
   }
 
   async isRelayingAvailable(destination: Chain): Promise<boolean> {
@@ -309,13 +283,15 @@ export class EvmNtt<N extends Network, C extends EvmChains>
   }
 
   async getIsExecuted(attestation: Ntt.Attestation): Promise<boolean> {
-    const payload =
-      attestation.payloadName === "WormholeTransfer"
-        ? attestation.payload
-        : attestation.payload["payload"];
-    const isExecuted = await this.manager.isMessageExecuted(
-      Ntt.messageDigest(attestation.emitterChain, payload["nttManagerPayload"])
-    );
+    // const payload =
+    //   attestation.payloadName === "WormholeTransfer"
+    //     ? attestation.payload
+    //     : attestation.payload["payload"];
+    const isExecuted = false;
+    // TODO: err... fix this
+    // await this.manager.isMessageExecuted(
+    //   Ntt.messageDigest(attestation.emitterChain, payload["nttManagerPayload"])
+    // );
     if (!isExecuted) return false;
     // Also check that the transfer is not queued for it to be considered complete
     return !(await this.getIsTransferInboundQueued(attestation));
@@ -337,13 +313,15 @@ export class EvmNtt<N extends Network, C extends EvmChains>
   }
 
   getIsApproved(attestation: Ntt.Attestation): Promise<boolean> {
-    const payload =
-      attestation.payloadName === "WormholeTransfer"
-        ? attestation.payload
-        : attestation.payload["payload"];
-    return this.manager.isMessageApproved(
-      Ntt.messageDigest(attestation.emitterChain, payload["nttManagerPayload"])
-    );
+    // TODO: err... fix this
+    return Promise.resolve(true);
+    // const payload =
+    //   attestation.payloadName === "WormholeTransfer"
+    //     ? attestation.payload
+    //     : attestation.payload["payload"];
+    // return this.manager.isMessageApproved(
+    //   Ntt.messageDigest(attestation.emitterChain, payload["nttManagerPayload"])
+    // );
   }
 
   async getTokenDecimals(): Promise<number> {
@@ -426,7 +404,7 @@ export class EvmNtt<N extends Network, C extends EvmChains>
     dstChain: Chain,
     options: Ntt.TransferOptions
   ): Promise<bigint> {
-    const [, totalPrice] = await this.manager.quoteDeliveryPrice(
+    const totalPrice = await this.manager.quoteDeliveryPrice(
       toChainId(dstChain),
       Ntt.encodeTransceiverInstructions(this.encodeOptions(options))
     );
@@ -436,12 +414,14 @@ export class EvmNtt<N extends Network, C extends EvmChains>
   async *setPeer(
     peer: ChainAddress<C>,
     tokenDecimals: number,
+    gasLimit: bigint,
     inboundLimit: bigint
   ) {
     const tx = await this.manager.setPeer.populateTransaction(
       toChainId(peer.chain),
       universalAddress(peer),
       tokenDecimals,
+      gasLimit,
       inboundLimit
     );
     yield this.createUnsignedTx(tx, "Ntt.setPeer");
@@ -615,7 +595,8 @@ export class EvmNtt<N extends Network, C extends EvmChains>
       manager: this.managerAddress,
       token: await this.manager.token(),
       transceiver: {
-        wormhole: (await this.manager.getTransceivers())[0]!, // TODO: make this more generic
+        // TODO: idk how this should work now
+        // wormhole: (await this.manager.getTransceivers())[0]!, // TODO: make this more generic
       },
     };
 

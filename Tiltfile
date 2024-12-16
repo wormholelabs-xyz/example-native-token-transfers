@@ -14,26 +14,47 @@ docker_build(
     ignore=["./sdk/__tests__", "./sdk/Dockerfile", "./sdk/ci.yaml", "./sdk/**/dist", "./sdk/node_modules", "./sdk/**/node_modules"],
     dockerfile = "./solana/Dockerfile",
 )
-docker_build(
-    ref = "solana-test-validator",
-    context = "solana",
-    dockerfile = "solana/Dockerfile.test-validator"
-)
-k8s_yaml_with_ns("./solana/solana-devnet.yaml")
-k8s_resource(
-    "solana-devnet",
-    labels = ["anchor-ntt"],
-    port_forwards = [
-        port_forward(8899, name = "Solana RPC [:8899]"),
-        port_forward(8900, name = "Solana WS [:8900]"),
-    ],
-)
+# docker_build(
+#     ref = "solana-test-validator",
+#     context = "solana",
+#     dockerfile = "solana/Dockerfile.test-validator"
+# )
+# k8s_yaml_with_ns("./solana/solana-devnet.yaml")
+# k8s_resource(
+#     "solana-devnet",
+#     labels = ["anchor-ntt"],
+#     port_forwards = [
+#         port_forward(8899, name = "Solana RPC [:8899]"),
+#         port_forward(8900, name = "Solana WS [:8900]"),
+#     ],
+# )
 
 # EVM build
 docker_build(
     ref = "ntt-evm-contract",
     context = "./evm",
     dockerfile = "./evm/Dockerfile",
+)
+
+# MM and Executor Contract Deploy / Setup
+docker_build(
+    ref = "executor-deploy",
+    context = "tilt",
+    dockerfile = "tilt/Dockerfile.deploy",
+)
+docker_build(
+    ref = "executor",
+    context = "tilt",
+    dockerfile = "tilt/Dockerfile.executor",
+)
+k8s_yaml_with_ns("tilt/executor.yaml") 
+k8s_resource(
+    "executor",
+    labels = ["executor"],
+    resource_deps = ["eth-devnet", "eth-devnet2"],
+    port_forwards = [
+        port_forward(3000, name = "Executor [:3000]"),
+    ],
 )
 
 # CI tests

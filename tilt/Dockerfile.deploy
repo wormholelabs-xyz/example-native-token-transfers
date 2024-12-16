@@ -1,0 +1,40 @@
+FROM --platform=linux/amd64 ghcr.io/foundry-rs/foundry@sha256:8b843eb65cc7b155303b316f65d27173c862b37719dc095ef3a2ef27ce8d3c00 as builder
+
+RUN apk add jq bash
+
+WORKDIR /app/example-messaging-endpoint
+
+RUN git init && \
+    git remote add origin https://github.com/wormholelabs-xyz/example-messaging-endpoint && \
+    git fetch --depth 1 origin 5fffb3e59dc8427e6a9fa1faa9066010a0ecd9bc && \
+    git checkout FETCH_HEAD
+
+WORKDIR /app/example-messaging-endpoint/evm
+
+RUN forge build
+
+WORKDIR /app/example-messaging-executor
+
+RUN git init && \
+    git remote add origin https://github.com/wormholelabs-xyz/example-messaging-executor && \
+    git fetch --depth 1 origin 529a83c2e3924a896207dc6470d50373a3dcf79b && \
+    git checkout FETCH_HEAD
+
+WORKDIR /app/example-messaging-executor/evm
+
+RUN  forge build
+
+WORKDIR /app/example-messaging-adapter-wormhole-guardians
+
+RUN git init && \
+    git remote add origin https://github.com/wormholelabs-xyz/example-messaging-adapter-wormhole-guardians && \
+    git fetch --depth 1 origin 7deb17c52d95b252435740a1047902a857b5fea8 && \
+    git checkout FETCH_HEAD
+
+WORKDIR /app/example-messaging-adapter-wormhole-guardians/evm
+
+RUN  forge build
+
+WORKDIR /app
+
+COPY deploy.sh deploy.sh

@@ -767,6 +767,7 @@ export class SolanaNtt<N extends Network, C extends SolanaChains>
   async *setPeer(
     peer: ChainAddress,
     tokenDecimals: number,
+    _gasLimit: bigint,
     inboundLimit: bigint,
     payer: AccountAddress<C>
   ) {
