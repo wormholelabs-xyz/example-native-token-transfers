@@ -6,7 +6,7 @@ WORKDIR /usr/src/
 
 RUN git init && \
     git remote add origin https://github.com/wormholelabs-xyz/example-messaging-executor && \
-    git fetch --depth 1 origin f6242c6c2d5152069d0e3f7521d25f28b124359d && \
+    git fetch --depth 1 origin a1f5921f3748b8597fece7a7a923f8f179a79a4d && \
     git checkout FETCH_HEAD
 
 RUN --mount=type=cache,uid=1000,gid=1000,target=/home/node/.npm \

@@ -463,22 +463,31 @@ export class EvmNtt<N extends Network, C extends EvmChains>
     // assemble the transceiver instructions
     // like https://github.com/wormholelabs-xyz/example-messaging-adapter-wormhole-guardians/blob/7deb17c52d95b252435740a1047902a857b5fea8/evm/src/WormholeGuardiansAdapterWithExecutor.sol#L132-L152
     // and  https://github.com/wormholelabs-xyz/example-messaging-endpoint/blob/0f853ea0335937d611217f5048d677a4f46249fd/evm/src/libraries/AdapterInstructions.sol#L37-L66
-    const payload = new BinaryWriter()
+    const wgaGasLimit = 1000000n; // determine some amount of gas based on destination chain
+    const wgaRelayInstruction = encodeRelayInstructions([
+      { type: "GasInstruction", gasLimit: wgaGasLimit, msgValue: 0n },
+    ]);
+    const wgaExecutorEstimate = await fetchEstimate(quote, wgaRelayInstruction);
+    const transceiversInstruction = new BinaryWriter()
       .writeUint8(1) // version
-
+      .writeUint256(wgaExecutorEstimate)
+      .writeUint16((quote.length - 2) / 2)
+      .writeHex(quote)
+      .writeUint16((wgaRelayInstruction.length - 2) / 2)
+      .writeHex(wgaRelayInstruction)
       .data();
     const transceiversInstructions = new BinaryWriter()
       .writeUint8(1) // instructionsLength
       .writeUint8(0) // instruction.index
-      .writeUint16(payload.length)
-      .writeUint8Array(payload)
+      .writeUint16(transceiversInstruction.length)
+      .writeUint8Array(transceiversInstruction)
       .toHex();
 
     // Note: these flags are indexed by transceiver index
     const totalPrice =
       executorEstimate +
       (await this.manager.quoteDeliveryPrice(
-        destination.chain,
+        toChainId(destination.chain),
         transceiversInstructions
       ));
     // TODO: make quoteDeliveryPrice work again

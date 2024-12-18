@@ -39,7 +39,6 @@ import { NTT } from "../../solana/ts/lib/index.js";
 import { SolanaNtt } from "../../solana/ts/sdk/index.js";
 import { Ntt } from "../definitions/src/index.js";
 import { submitAccountantVAAs } from "./accountant.js";
-import { RelayInstructions__factory } from "../../evm/ts/ethers-ci-contracts/index.js";
 
 // Note: Currently, in order for this to run, the evm bindings with extra contracts must be build
 // To do that, at the root, run `npm run generate:test`
@@ -381,11 +380,6 @@ async function deployEvm(ctx: Ctx): Promise<Ctx> {
   const trimmedAmountContract = await trimmedAmountFactory.deploy();
   await trimmedAmountContract.deploymentTransaction()?.wait(1);
 
-  console.log("Deploying relay instructions");
-  const relayInstructionsFactory = new RelayInstructions__factory(wallet);
-  const relayInstructionsContract = await relayInstructionsFactory.deploy();
-  await relayInstructionsContract.deploymentTransaction()?.wait(1);
-
   console.log("Deploying dummy token");
   // Deploy the NTT token
   const NTTAddress = await new (ctx.mode === "locking"
@@ -405,15 +399,12 @@ async function deployEvm(ctx: Ctx): Promise<Ctx> {
   const transceiverStructsAddress =
     await transceiverStructsContract.getAddress();
   const trimmedAmountAddress = await trimmedAmountContract.getAddress();
-  const relayInstructionsAddress = await relayInstructionsContract.getAddress();
   const ERC20NTTAddress = await NTTAddress.getAddress();
 
   const myObj = {
     "src/libraries/TransceiverStructs.sol:TransceiverStructs":
       transceiverStructsAddress,
     "src/libraries/TrimmedAmount.sol:TrimmedAmountLib": trimmedAmountAddress,
-    "lib/example-messaging-executor/evm/src/libraries/RelayInstructions.sol:RelayInstructions":
-      relayInstructionsAddress,
   };
 
   const chainId = toChainId(ctx.context.chain);
