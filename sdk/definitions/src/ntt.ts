@@ -91,6 +91,7 @@ export namespace Ntt {
   export type Peer<C extends Chain> = {
     address: ChainAddress<C>;
     tokenDecimals: number;
+    gasLimit: bigint;
     inboundLimit: bigint;
   };
 

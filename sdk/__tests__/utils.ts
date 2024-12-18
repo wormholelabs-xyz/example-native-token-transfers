@@ -622,13 +622,13 @@ async function setupPeer(targetCtx: Ctx, peerCtx: Ctx) {
   );
   await signSendWait(target, setPeerTxs, signer);
 
-  const setXcvrPeerTxs = nttManager.setTransceiverPeer(
-    0, // 0 = Wormhole
-    peerTransceiver,
-    sender.address
-  );
+  // const setXcvrPeerTxs = nttManager.setTransceiverPeer(
+  //   0, // 0 = Wormhole
+  //   peerTransceiver,
+  //   sender.address
+  // );
   // const xcvrPeerTxids = await signSendWait(target, setXcvrPeerTxs, signer);
-  await signSendWait(target, setXcvrPeerTxs, signer);
+  // await signSendWait(target, setXcvrPeerTxs, signer);
   // const [whm] = await target.parseTransaction(xcvrPeerTxids[0]!.txid);
   console.log("Set peers for: ", target.chain, peer.chain);
 

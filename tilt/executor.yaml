@@ -46,18 +46,3 @@ spec:
             - containerPort: 3000
               name: executor
               protocol: TCP
-        - name: deploy
-          image: executor-deploy
-          stdin: true
-          command:
-            - /bin/sh
-            - -c
-            - "bash ./deploy.sh && touch success && sleep infinity"
-          readinessProbe:
-            exec:
-              command:
-                - test
-                - -e
-                - "success"
-            initialDelaySeconds: 5
-            periodSeconds: 5

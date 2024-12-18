@@ -42,6 +42,9 @@ import {
   NttTransceiverBindings,
   loadAbiVersion,
 } from "./bindings.js";
+import { BinaryWriter } from "./executor/BinaryWriter.js";
+import { fetchEstimate, fetchQuote } from "./executor/fetch.js";
+import { encodeRelayInstructions } from "./executor/relayInstructions.js";
 
 export class EvmNttWormholeTranceiver<N extends Network, C extends EvmChains>
   implements
@@ -343,6 +346,7 @@ export class EvmNtt<N extends Network, C extends EvmChains>
     return {
       address: { chain: chain, address: toUniversal(chain, peerAddress) },
       tokenDecimals: Number(peer.tokenDecimals),
+      gasLimit: peer.gasLimit,
       inboundLimit: await this.getInboundLimit(chain),
     };
   }
@@ -446,11 +450,39 @@ export class EvmNtt<N extends Network, C extends EvmChains>
   ): AsyncGenerator<EvmUnsignedTransaction<N, C>> {
     const senderAddress = new EvmAddress(sender).toString();
 
+    const peer = await this.getPeer(destination.chain);
+    if (!peer) {
+      throw new Error(`null peer for destination chain ${destination.chain}`);
+    }
+    const quote = await fetchQuote(this.chain, destination.chain);
+    const relayInstruction = encodeRelayInstructions([
+      { type: "GasInstruction", gasLimit: peer.gasLimit, msgValue: 0n },
+    ]);
+    const executorEstimate = await fetchEstimate(quote, relayInstruction);
+
+    // assemble the transceiver instructions
+    // like https://github.com/wormholelabs-xyz/example-messaging-adapter-wormhole-guardians/blob/7deb17c52d95b252435740a1047902a857b5fea8/evm/src/WormholeGuardiansAdapterWithExecutor.sol#L132-L152
+    // and  https://github.com/wormholelabs-xyz/example-messaging-endpoint/blob/0f853ea0335937d611217f5048d677a4f46249fd/evm/src/libraries/AdapterInstructions.sol#L37-L66
+    const payload = new BinaryWriter()
+      .writeUint8(1) // version
+
+      .data();
+    const transceiversInstructions = new BinaryWriter()
+      .writeUint8(1) // instructionsLength
+      .writeUint8(0) // instruction.index
+      .writeUint16(payload.length)
+      .writeUint8Array(payload)
+      .toHex();
+
     // Note: these flags are indexed by transceiver index
-    const totalPrice = await this.quoteDeliveryPrice(
-      destination.chain,
-      options
-    );
+    const totalPrice =
+      executorEstimate +
+      (await this.manager.quoteDeliveryPrice(
+        destination.chain,
+        transceiversInstructions
+      ));
+    // TODO: make quoteDeliveryPrice work again
+    // (await this.quoteDeliveryPrice(destination.chain, options));
 
     //TODO check for ERC-2612 (permit) support on token?
     const tokenContract = EvmPlatform.getTokenImplementation(
@@ -472,14 +504,18 @@ export class EvmNtt<N extends Network, C extends EvmChains>
 
     const receiver = universalAddress(destination);
     const txReq = await this.manager
-      .getFunction("transfer(uint256,uint16,bytes32,bytes32,bool,bytes)")
+      .getFunction(
+        "transfer(uint256,uint16,bytes32,bytes32,bool,bytes,bytes,bytes)"
+      )
       .populateTransaction(
         amount,
         toChainId(destination.chain),
         receiver,
         receiver,
         options.queue,
-        Ntt.encodeTransceiverInstructions(this.encodeOptions(options)),
+        quote,
+        "0x", // TODO: optionally encode gas dropoff relay instruction
+        transceiversInstructions,
         { value: totalPrice }
       );
 

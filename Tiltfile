@@ -41,17 +41,25 @@ docker_build(
     ref = "executor-deploy",
     context = "tilt",
     dockerfile = "tilt/Dockerfile.deploy",
+    only = ["deploy.sh"]
 )
 docker_build(
     ref = "executor",
     context = "tilt",
     dockerfile = "tilt/Dockerfile.executor",
+    only = [],
+)
+k8s_yaml_with_ns("tilt/executor-deploy.yaml") 
+k8s_resource(
+    "executor-deploy",
+    labels = ["executor"],
+    resource_deps = ["eth-devnet", "eth-devnet2"],
 )
 k8s_yaml_with_ns("tilt/executor.yaml") 
 k8s_resource(
     "executor",
     labels = ["executor"],
-    resource_deps = ["eth-devnet", "eth-devnet2"],
+    resource_deps = ["eth-devnet", "eth-devnet2", "guardian", "executor-deploy"],
     port_forwards = [
         port_forward(3000, name = "Executor [:3000]"),
     ],

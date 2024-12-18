@@ -598,6 +598,7 @@ export class SolanaNtt<N extends Network, C extends SolanaChains>
         address: toUniversal(chain, new Uint8Array(peer.address)),
       },
       tokenDecimals: peer.tokenDecimals,
+      gasLimit: BigInt(0), //TODO: read this from peer account
       inboundLimit: await this.getInboundLimit(chain),
     };
   }
